@@ -4,6 +4,11 @@
 #include <stdint.h>
 #include <time.h>
 
+// Types
+#define BMP280_S32_t int32_t
+#define BMP280_U32_t uint32_t
+#define BMP280_S64_t int64_t
+
 // Registers
 #define BMP280_CTRL_MEAS    0xF4
 #define BMP280_CONFIG       0xF5
@@ -146,6 +151,8 @@ int init_bmp280(int fd){
 
 struct bmp280_readout_t bmp280_measurement(int fd){
     struct bmp280_readout_t readout;
+    BMP280_S32_t temperature;
+    BMP280_U32_t pressure;
 
     // Set chip in forced mode, measure and then go to sleep mode again
     bmp280_write(fd, BMP280_CTRL_MEAS, reg_ctrl_meas);
@@ -163,11 +170,13 @@ struct bmp280_readout_t bmp280_measurement(int fd){
 
     // Format temperature
     BMP280_S32_t raw_temp = (int32_t)((uint32_t)raw_temp_buf[0] << 12) | ((uint32_t)raw_temp_buf[1] << 4) | ((uint32_t)raw_temp_buf[2] >> 4);
-    readout.temperature = bmp280_compensate_T_int32(raw_temp);
+    temperature = bmp280_compensate_T_int32(raw_temp);
+    readout.temperature = (double) temperature / 100;
 
     // Format temperature
     BMP280_S32_t raw_press = (int32_t)((uint32_t)raw_press_buf[0] << 12) | ((uint32_t)raw_press_buf[1] << 4) | ((uint32_t)raw_press_buf[2] >> 4);
-    readout.pressure = bmp280_compensate_P_int64(raw_press);
+    pressure = bmp280_compensate_P_int64(raw_press);
+    readout.pressure = (double) pressure / 256;
 
 
     return readout;
