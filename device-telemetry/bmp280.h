@@ -19,7 +19,7 @@ struct bmp280_readout_t{
 
 
 int init_bmp280(int fd);
-struct bmp280_readout_t bmp280_measurement(int fd);
+int bmp280_measurement(int fd, struct bmp280_readout_t* readout);
 
 
 

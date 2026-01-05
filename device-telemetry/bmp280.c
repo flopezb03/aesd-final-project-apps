@@ -70,20 +70,26 @@ static uint8_t reg_config;
 static int bmp280_write(int fd, uint8_t reg, uint8_t val)
 {
     uint8_t buf[2] = {reg, val};
-    return write(fd, buf, 2);
+    if(write(fd, buf, 2) < 2)
+        return 0;
+    return 1;
 }
 
 static int bmp280_read(int fd, uint8_t reg, uint8_t *buf, int len)
 {
-    write(fd, &reg, 1);
-    return read(fd, buf, len);
+    if(write(fd, &reg, 1) < 1)
+        return 0;
+    if(read(fd, buf, len) < len)
+        return 0;
+    return 1;
 }
-
-static uint16_t comp_param_read(int fd, uint8_t reg){
+static int comp_param_read(int fd, uint8_t reg, uint16_t *res){
     uint8_t buf[2];
-    bmp280_read(fd, reg, &buf, 2);
+    if(!bmp280_read(fd, reg, &buf, 2))
+        return 0;
     
-    return ((uint16_t)buf[1] << 8) | buf[0];
+    *res = ((uint16_t)buf[1] << 8) | buf[0];
+    return 1;
 }
 
 static BMP280_S32_t bmp280_compensate_T_int32(BMP280_S32_t adc_T){
@@ -123,61 +129,69 @@ static BMP280_U32_t bmp280_compensate_P_int64(BMP280_S32_t adc_P){
 int init_bmp280(int fd){
 
     // Read compensation parameters
-    dig_T1 = comp_param_read(fd, BMP280_CALIB00);
-    dig_T2 = (int16_t)comp_param_read(fd, BMP280_CALIB02);
-    dig_T3 = (int16_t)comp_param_read(fd, BMP280_CALIB04);
+    int read_success = 1;
+    read_success &= comp_param_read(fd, BMP280_CALIB00, &dig_T1);
+    read_success &= comp_param_read(fd, BMP280_CALIB02, &dig_T2);
+    read_success &= comp_param_read(fd, BMP280_CALIB04, &dig_T3);
 
-    dig_P1 = comp_param_read(fd, BMP280_CALIB06);
-    dig_P2 = (int16_t)comp_param_read(fd, BMP280_CALIB08);
-    dig_P3 = (int16_t)comp_param_read(fd, BMP280_CALIB10);
-    dig_P4 = (int16_t)comp_param_read(fd, BMP280_CALIB12);
-    dig_P5 = (int16_t)comp_param_read(fd, BMP280_CALIB14);
-    dig_P6 = (int16_t)comp_param_read(fd, BMP280_CALIB16);
-    dig_P7 = (int16_t)comp_param_read(fd, BMP280_CALIB18);
-    dig_P8 = (int16_t)comp_param_read(fd, BMP280_CALIB20);
-    dig_P9 = (int16_t)comp_param_read(fd, BMP280_CALIB22);
+    read_success &= comp_param_read(fd, BMP280_CALIB06, &dig_P1);
+    read_success &= comp_param_read(fd, BMP280_CALIB08, &dig_P2);
+    read_success &= comp_param_read(fd, BMP280_CALIB10, &dig_P3);
+    read_success &= comp_param_read(fd, BMP280_CALIB12, &dig_P4);
+    read_success &= comp_param_read(fd, BMP280_CALIB14, &dig_P5);
+    read_success &= comp_param_read(fd, BMP280_CALIB16, &dig_P6);
+    read_success &= comp_param_read(fd, BMP280_CALIB18, &dig_P7);
+    read_success &= comp_param_read(fd, BMP280_CALIB20, &dig_P8);
+    read_success &= comp_param_read(fd, BMP280_CALIB22, &dig_P9);
 
+    if(!read_success)
+        return 0;
 
     // Set register config
     reg_config = (t_sb << 5) | (filter << 2) | (spi3w_en);
-    bmp280_write(fd, BMP280_CONFIG, reg_config);
+    if(!bmp280_write(fd, BMP280_CONFIG, reg_config))
+        return 0;
 
     // Prepare register ctrl_meas
     reg_ctrl_meas = (osrs_p << 5) | (osrs_t << 2) | (mode);
 
+    return 1;
 }
 
 
 
-struct bmp280_readout_t bmp280_measurement(int fd){
-    struct bmp280_readout_t readout;
+int bmp280_measurement(int fd, struct bmp280_readout_t* readout){
     BMP280_S32_t temperature;
     BMP280_U32_t pressure;
 
     // Set chip in forced mode, measure and then go to sleep mode again
-    bmp280_write(fd, BMP280_CTRL_MEAS, reg_ctrl_meas);
+    if(!bmp280_write(fd, BMP280_CTRL_MEAS, reg_ctrl_meas))
+        return 0;
 
     // Read temperature registers
     uint8_t raw_temp_buf[3];
-    bmp280_read(fd, BMP280_TEMP_MSB, &raw_temp_buf, 3);
+    if(!bmp280_read(fd, BMP280_TEMP_MSB, &raw_temp_buf, 3))
+        return 0;
 
     // Read pressure registers
     uint8_t raw_press_buf[3];
-    bmp280_read(fd, BMP280_PRESS_MSB, &raw_press_buf, 3);
+    if(!bmp280_read(fd, BMP280_PRESS_MSB, &raw_press_buf, 3))
+        return 0;
 
     // Timestamp
-    time(&readout.timestamp);
+    if(time(&readout->timestamp) == -1)
+        return 0;
 
     // Format temperature
     BMP280_S32_t raw_temp = (int32_t)((uint32_t)raw_temp_buf[0] << 12) | ((uint32_t)raw_temp_buf[1] << 4) | ((uint32_t)raw_temp_buf[2] >> 4);
     temperature = bmp280_compensate_T_int32(raw_temp);
-    readout.temperature = (double) temperature / 100;
+    readout->temperature = (double) temperature / 100;
 
     // Format temperature
     BMP280_S32_t raw_press = (int32_t)((uint32_t)raw_press_buf[0] << 12) | ((uint32_t)raw_press_buf[1] << 4) | ((uint32_t)raw_press_buf[2] >> 4);
     pressure = bmp280_compensate_P_int64(raw_press);
-    readout.pressure = (double) pressure / 256;
+    readout->pressure = (double) pressure / 256;
 
 
-    return readout;
+    return 1;
 }
