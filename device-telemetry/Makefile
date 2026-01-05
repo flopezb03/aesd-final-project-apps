@@ -2,8 +2,8 @@ CC      ?= $(CROSS_COMPILE)gcc
 CFLAGS  ?= -Wall -Wextra -g 
 LDFLAGS ?= 
 
-TARGET  := telemetry-daemon
-SRCS    := main.c
+TARGET  := telemetry-app
+SRCS    := main.c bmp280.c
 OBJS    := $(SRCS:.c=.o)
 
 .PHONY: all clean
