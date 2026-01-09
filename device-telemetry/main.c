@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <syslog.h>
@@ -10,6 +11,7 @@
 #include <sys/ioctl.h>
 
 #include "bmp280.h"
+#include "lcd.h"
 
 #define I2C_DEV "/dev/i2c-1"
 
@@ -48,30 +50,81 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
+
     if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
-        error_message("Ioctl I2C_SLAVE command");
+        error_message("Ioctl I2C_SLAVE (bmp280) command");
         closeall();
         exit(EXIT_FAILURE);
     }
-
     if(!init_bmp280(i2c_fd)){
         error_message("Init BMP280");
         closeall();
         exit(EXIT_FAILURE);
     }
 
+
+    if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
+        error_message("Ioctl I2C_SLAVE(lcd) command");
+        closeall();
+        exit(EXIT_FAILURE);
+    }
+    init_lcd(i2c_fd);
+    
+
+
+    // First measures not used because of wrong values
+    if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
+        error_message("Ioctl I2C_SLAVE (bmp280) command");
+        closeall();
+        exit(EXIT_FAILURE);
+    }
+    bmp280_measurement(i2c_fd, bmp280_readout);
+    sleep(2);
+
+
+
     // Loop
     while(!end){
         // Take measures
+        if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
+            error_message("Ioctl I2C_SLAVE (bmp280) command");
+            closeall();
+            exit(EXIT_FAILURE);
+        }
         if(!bmp280_measurement(i2c_fd, bmp280_readout))
             continue;
-
+        
         // Write to lcd
+        if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
+            error_message("Ioctl I2C_SLAVE(lcd) command");
+            closeall();
+            exit(EXIT_FAILURE);
+        }
+        char s1[16], s2[16];
+        snprintf(s1, sizeof(s1), "T: %.2lf %cC", bmp280_readout->temperature, 0b11011111);
+        snprintf(s2, sizeof(s2), "P: %.2lf hPa", bmp280_readout->pressure / 100);
+        write_lcd(i2c_fd, s1, s2);
 
         // Write to socket
 
         sleep(60);
     }
+    if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
+        error_message("Ioctl I2C_SLAVE(lcd) command");
+        closeall();
+        exit(EXIT_FAILURE);
+    }
+    write_lcd(i2c_fd, "Closing app", "");
+    sleep(2);
+    write_lcd(i2c_fd, "", "");
+    sleep(1);
+    write_lcd(i2c_fd, "Closing app", "");
+    sleep(2);
+    write_lcd(i2c_fd, "", "");
+    sleep(1);
+    write_lcd(i2c_fd, "Closing app", "");
+    sleep(2);
+    write_lcd(i2c_fd, "", "");
 
     closeall();
     exit(EXIT_SUCCESS);
@@ -80,7 +133,7 @@ int main(int argc, char** argv)
 
 
 static void closeall(){
-    if(bmp280_readout == NULL)
+    if(bmp280_readout != NULL)
         free(bmp280_readout);
     if(i2c_fd != -1)
         close(i2c_fd);
