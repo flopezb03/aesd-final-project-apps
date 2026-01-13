@@ -82,6 +82,7 @@ static void closeall(int unix_server_fd, int unix_client_fd){
         close(unix_client_fd);
     if(unix_server_fd != -1)
         close(unix_server_fd);
+    unlink(UNIX_SOCKET_NAME);
     
     closelog();
 }
@@ -109,6 +110,8 @@ static void error_message(char* msg){
 
 static int init_server_unix_socket(int* unix_server_fd, int* unix_client_fd){
     struct sockaddr_un unix_server_addr;
+
+    unlink(UNIX_SOCKET_NAME);
 
     if((*unix_server_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
         error_message("Unix Socket Creation");
