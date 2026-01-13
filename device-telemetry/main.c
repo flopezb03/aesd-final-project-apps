@@ -11,21 +11,27 @@
 #include <time.h>
 #include <linux/i2c-dev.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include "bmp280.h"
 #include "lcd.h"
 
 #define I2C_DEV "/dev/i2c-1"
+#define UNIX_SOCKET_NAME "/tmp/telemetry-client.socket"
 
 static void closeall();
 static void set_signals();
 static void term_handler(int);
 static void error_message(char* msg);
+static void init_client_unix_socket();
+static void write_to_server();
 
 static int end = 0;
 static int i2c_fd = -1;
-struct bmp280_readout_t *bmp280_readout;
+static struct bmp280_readout_t *bmp280_readout;
 static int daemon_mode = 0;
+static int unix_server_fd = -1;
 
 int main(int argc, char** argv)
 {
@@ -42,7 +48,8 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-    // Open socket 
+    // Init Unix Socket as Client 
+    init_client_unix_socket();
     
     // I2C Devices initialization
     i2c_fd = open(I2C_DEV, O_RDWR);
@@ -87,6 +94,11 @@ int main(int argc, char** argv)
 
     // Loop
     while(!end){
+        //Try reconnect server
+        if(unix_server_fd == -1){
+            init_client_unix_socket();
+        }
+
         // Take measures
         if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
             error_message("Ioctl I2C_SLAVE (bmp280) command");
@@ -108,6 +120,9 @@ int main(int argc, char** argv)
         write_lcd(i2c_fd, s1, s2);
 
         // Write to socket
+        if(unix_server_fd != -1)
+            write_to_server();
+
 
         sleep(60);
     }
@@ -135,6 +150,8 @@ int main(int argc, char** argv)
 
 
 static void closeall(){
+    if(unix_server_fd != -1)
+        close(unix_server_fd);
     if(bmp280_readout != NULL)
         free(bmp280_readout);
     if(i2c_fd != -1)
@@ -161,4 +178,25 @@ static void error_message(char* msg){
         syslog(LOG_ERR, "Error: %s", msg);
     else
         fprintf(stderr, "Error: %s\n", msg);
+}
+
+static void init_client_unix_socket(){
+    struct sockaddr_un unix_server_addr;
+    
+    if((unix_server_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
+        error_message("Unix Socket Creation");
+        closeall();
+        exit(EXIT_FAILURE);
+    }
+    unix_server_addr.sun_family = AF_UNIX;
+    strncpy(unix_server_addr.sun_path, UNIX_SOCKET_NAME, sizeof(unix_server_addr.sun_path) - 1);
+
+    
+    if(connect(unix_server_fd, (const struct sockaddr*)&unix_server_addr, sizeof(unix_server_addr)) == -1)
+        error_message("Connection to the Unix Socket");
+}
+
+static void write_to_server(){
+    if(send(unix_server_fd, bmp280_readout, sizeof(struct bmp280_readout_t), MSG_NOSIGNAL) <= 0)
+        error_message("Writing to server");
 }
