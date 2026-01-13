@@ -20,61 +20,62 @@
 #define I2C_DEV "/dev/i2c-1"
 #define UNIX_SOCKET_NAME "/tmp/telemetry-client.socket"
 
-static void closeall();
+static void closeall(int i2c_fd, int unix_server_fd);
 static void set_signals();
 static void term_handler(int);
 static void error_message(char* msg);
-static void init_client_unix_socket();
-static void write_to_server();
+static int init_client_unix_socket(int* unix_server_fd);
+static void write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p);
 
 static int end = 0;
-static int i2c_fd = -1;
-static struct bmp280_readout_t *bmp280_readout;
 static int daemon_mode = 0;
-static int unix_server_fd = -1;
+
 
 int main(int argc, char** argv)
 {
+    int i2c_fd = -1;
+    int unix_server_fd = -1;
+    struct bmp280_readout_t bmp280_readout;
+    
+
+
     if (argc == 2 && strcmp(argv[1], "-d") == 0){
         daemon_mode = 1;
         openlog(NULL,0,LOG_USER);
         daemon(0,0);
     }
     set_signals();
-    
-    if((bmp280_readout = malloc(sizeof(bmp280_readout))) == NULL){
-        error_message("Malloc");
-        closeall();
-        exit(EXIT_FAILURE);
-    }
 
     // Init Unix Socket as Client 
-    init_client_unix_socket();
+    if(!init_client_unix_socket(&unix_server_fd)){
+        closeall(i2c_fd, unix_server_fd);
+        exit(EXIT_FAILURE);
+    }
     
     // I2C Devices initialization
     i2c_fd = open(I2C_DEV, O_RDWR);
     if (i2c_fd < 0) {
         error_message("Open i2c-1");
-        closeall();
+        closeall(i2c_fd, unix_server_fd);
         exit(EXIT_FAILURE);
     }
 
 
     if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
         error_message("Ioctl I2C_SLAVE (bmp280) command");
-        closeall();
+        closeall(i2c_fd, unix_server_fd);
         exit(EXIT_FAILURE);
     }
     if(!init_bmp280(i2c_fd)){
         error_message("Init BMP280");
-        closeall();
+        closeall(i2c_fd, unix_server_fd);
         exit(EXIT_FAILURE);
     }
 
 
     if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
         error_message("Ioctl I2C_SLAVE(lcd) command");
-        closeall();
+        closeall(i2c_fd, unix_server_fd);
         exit(EXIT_FAILURE);
     }
     init_lcd(i2c_fd);
@@ -84,10 +85,10 @@ int main(int argc, char** argv)
     // First measures not used because of wrong values
     if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
         error_message("Ioctl I2C_SLAVE (bmp280) command");
-        closeall();
+        closeall(i2c_fd, unix_server_fd);
         exit(EXIT_FAILURE);
     }
-    bmp280_measurement(i2c_fd, bmp280_readout);
+    bmp280_measurement(i2c_fd, &bmp280_readout);
     sleep(2);
 
 
@@ -96,39 +97,42 @@ int main(int argc, char** argv)
     while(!end){
         //Try reconnect server
         if(unix_server_fd == -1){
-            init_client_unix_socket();
+            if(!init_client_unix_socket(&unix_server_fd)){
+                closeall(i2c_fd, unix_server_fd);
+                exit(EXIT_FAILURE);
+            }
         }
 
         // Take measures
         if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
             error_message("Ioctl I2C_SLAVE (bmp280) command");
-            closeall();
+            closeall(i2c_fd, unix_server_fd);
             exit(EXIT_FAILURE);
         }
-        if(!bmp280_measurement(i2c_fd, bmp280_readout))
+        if(!bmp280_measurement(i2c_fd, &bmp280_readout))
             continue;
         
         // Write to lcd
         if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
             error_message("Ioctl I2C_SLAVE(lcd) command");
-            closeall();
+            closeall(i2c_fd, unix_server_fd);
             exit(EXIT_FAILURE);
         }
         char s1[16], s2[16];
-        snprintf(s1, sizeof(s1), "T: %.2lf %cC", bmp280_readout->temperature, 0b11011111);
-        snprintf(s2, sizeof(s2), "P: %.2lf hPa", bmp280_readout->pressure / 100);
+        snprintf(s1, sizeof(s1), "T: %.2lf %cC", bmp280_readout.temperature, 0b11011111);
+        snprintf(s2, sizeof(s2), "P: %.2lf hPa", bmp280_readout.pressure / 100);
         write_lcd(i2c_fd, s1, s2);
 
         // Write to socket
         if(unix_server_fd != -1)
-            write_to_server();
+            write_to_server(unix_server_fd, &bmp280_readout);
 
 
         sleep(60);
     }
     if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
         error_message("Ioctl I2C_SLAVE(lcd) command");
-        closeall();
+        closeall(i2c_fd, unix_server_fd);
         exit(EXIT_FAILURE);
     }
     write_lcd(i2c_fd, "Closing app", "");
@@ -143,19 +147,17 @@ int main(int argc, char** argv)
     sleep(2);
     write_lcd(i2c_fd, "", "");
 
-    closeall();
+    closeall(i2c_fd, unix_server_fd);
     exit(EXIT_SUCCESS);
 }
 
 
 
-static void closeall(){
-    if(unix_server_fd != -1)
-        close(unix_server_fd);
-    if(bmp280_readout != NULL)
-        free(bmp280_readout);
+static void closeall(int i2c_fd, int unix_server_fd){
     if(i2c_fd != -1)
         close(i2c_fd);
+    if(unix_server_fd != -1)
+        close(unix_server_fd);
     
     closelog();
 }
@@ -180,23 +182,24 @@ static void error_message(char* msg){
         fprintf(stderr, "Error: %s\n", msg);
 }
 
-static void init_client_unix_socket(){
+static int init_client_unix_socket(int* unix_server_fd){
     struct sockaddr_un unix_server_addr;
     
-    if((unix_server_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
+    if((*unix_server_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
         error_message("Unix Socket Creation");
-        closeall();
-        exit(EXIT_FAILURE);
+        return 0;
     }
     unix_server_addr.sun_family = AF_UNIX;
     strncpy(unix_server_addr.sun_path, UNIX_SOCKET_NAME, sizeof(unix_server_addr.sun_path) - 1);
 
     
-    if(connect(unix_server_fd, (const struct sockaddr*)&unix_server_addr, sizeof(unix_server_addr)) == -1)
+    if(connect(*unix_server_fd, (const struct sockaddr*)&unix_server_addr, sizeof(unix_server_addr)) == -1)
         error_message("Connection to the Unix Socket");
+    
+    return 1;
 }
 
-static void write_to_server(){
-    if(send(unix_server_fd, bmp280_readout, sizeof(struct bmp280_readout_t), MSG_NOSIGNAL) <= 0)
+static void write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p){
+    if(send(unix_server_fd, bmp280_readout_p, sizeof(struct bmp280_readout_t), MSG_NOSIGNAL) <= 0)
         error_message("Writing to server");
 }
