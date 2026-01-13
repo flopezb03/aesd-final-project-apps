@@ -25,7 +25,7 @@ static void set_signals();
 static void term_handler(int);
 static void error_message(char* msg);
 static int init_client_unix_socket(int* unix_server_fd);
-static void write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p);
+static int write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p);
 
 static int end = 0;
 static int daemon_mode = 0;
@@ -124,8 +124,12 @@ int main(int argc, char** argv)
         write_lcd(i2c_fd, s1, s2);
 
         // Write to socket
-        if(unix_server_fd != -1)
-            write_to_server(unix_server_fd, &bmp280_readout);
+        if(unix_server_fd != -1){
+            if(!write_to_server(unix_server_fd, &bmp280_readout)){
+                close(unix_server_fd);
+                unix_server_fd = -1;
+            }
+        }
 
 
         sleep(60);
@@ -193,13 +197,19 @@ static int init_client_unix_socket(int* unix_server_fd){
     strncpy(unix_server_addr.sun_path, UNIX_SOCKET_NAME, sizeof(unix_server_addr.sun_path) - 1);
 
     
-    if(connect(*unix_server_fd, (const struct sockaddr*)&unix_server_addr, sizeof(unix_server_addr)) == -1)
+    if(connect(*unix_server_fd, (const struct sockaddr*)&unix_server_addr, sizeof(unix_server_addr)) == -1){
         error_message("Connection to the Unix Socket");
+        close(*unix_server_fd);
+        *unix_server_fd = -1;
+    }
     
     return 1;
 }
 
-static void write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p){
-    if(send(unix_server_fd, bmp280_readout_p, sizeof(struct bmp280_readout_t), MSG_NOSIGNAL) <= 0)
+static int write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p){
+    if(send(unix_server_fd, bmp280_readout_p, sizeof(struct bmp280_readout_t), MSG_NOSIGNAL) <= 0){
         error_message("Writing to server");
+        return 0;
+    }
+    return 1;
 }
