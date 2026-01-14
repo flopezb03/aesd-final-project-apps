@@ -1,0 +1,13 @@
+#!/bin/sh
+
+case "$1" in
+	start)
+		start-stop-daemon -S -n telemetry-app -a /usr/bin/telemetry-app -- "-d"
+		;;
+	stop)
+		start-stop-daemon -K -n telemetry-app --signal SIGTERM
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+	exit 1
+esac
