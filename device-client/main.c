@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 #define UNIX_SOCKET_NAME "/tmp/telemetry-client.socket"
 #define TCP_SOCKET_IP "192.168.1.43"
@@ -20,8 +21,12 @@ struct measures_data_t{
     double pressure;
     time_t timestamp;
 };
+struct thread_args{
+    int* tcp_server_fd_p;
+    int* unix_client_fd_p;
+};
 
-static void closeall(int unix_server_fd, int unix_client_fd, int tcp_server_fd);
+static void closeall(int unix_server_fd, int unix_client_fd, int tcp_server_fd, pthread_t t_listener);
 static void set_signals();
 static void term_handler(int);
 static void error_message(char* msg);
@@ -32,6 +37,8 @@ static int read_from_client(int unix_client_fd, struct measures_data_t* md);
 
 static int init_client_tcp_socket(int* tcp_server_fd);
 static int write_to_tcp_server(int tcp_server_fd, struct measures_data_t* measures_data_p);
+
+static void* thread_listener(void* args);
 
 
 static int daemon_mode = 0;
@@ -45,6 +52,10 @@ int main(int argc, char** argv){
     int unix_client_fd = -1;
     int tcp_server_fd = -1;
     struct measures_data_t measures_data;
+    pthread_t t_listener = NULL;
+    struct thread_args t_args;
+    t_args.tcp_server_fd_p = &tcp_server_fd;
+    t_args.unix_client_fd_p = &unix_client_fd;
 
     if (argc == 2 && strcmp(argv[1], "-d") == 0){
         daemon_mode = 1;
@@ -55,15 +66,20 @@ int main(int argc, char** argv){
 
     //  Init Unix Socket as Server
     if(!init_server_unix_socket(&unix_server_fd, &unix_client_fd)){
-        closeall(unix_server_fd, unix_client_fd, tcp_server_fd);
+        closeall(unix_server_fd, unix_client_fd, tcp_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
 
     // Init TCP Socket as Client 
     if(!init_client_tcp_socket(&tcp_server_fd)){
-        closeall(unix_server_fd, unix_client_fd, tcp_server_fd);
+        closeall(unix_server_fd, unix_client_fd, tcp_server_fd, t_listener);
         exit(EXIT_FAILURE);
+    }else{
+        //Create Listener Thread
+        if(tcp_server_fd != -1)
+            pthread_create(&t_listener, NULL, thread_listener, &t_args);
     }
+
 
     while(!end){
 
@@ -76,7 +92,7 @@ int main(int argc, char** argv){
             close(unix_client_fd);
 
             if(!accept_unix_client(unix_server_fd, &unix_client_fd)){
-                closeall(unix_server_fd, unix_client_fd, tcp_server_fd);
+                closeall(unix_server_fd, unix_client_fd, tcp_server_fd, t_listener);
                 exit(EXIT_FAILURE);
             }
             continue;
@@ -85,8 +101,12 @@ int main(int argc, char** argv){
         //Try reconnect server
         if(tcp_server_fd == -1){
             if(!init_client_tcp_socket(&tcp_server_fd)){
-                closeall(unix_server_fd, unix_client_fd, tcp_server_fd);
+                closeall(unix_server_fd, unix_client_fd, tcp_server_fd, t_listener);
                 exit(EXIT_FAILURE);
+            }else{
+                //Create Listener Thread
+                if(tcp_server_fd != -1)
+                    pthread_create(&t_listener, NULL, thread_listener, &t_args);
             }
         }
 
@@ -95,23 +115,27 @@ int main(int argc, char** argv){
             if(!write_to_tcp_server(tcp_server_fd, &measures_data)){
                 close(tcp_server_fd);
                 tcp_server_fd = -1;
+                pthread_join(t_listener, NULL);
+                t_listener = NULL;
             }
         }
 
         
     }
 
-    closeall(unix_server_fd, unix_client_fd, tcp_server_fd);
+    closeall(unix_server_fd, unix_client_fd, tcp_server_fd, t_listener);
     exit(EXIT_SUCCESS);
 }
 
-static void closeall(int unix_server_fd, int unix_client_fd, int tcp_server_fd){
-    if(tcp_server_fd != -1)
-        close(tcp_server_fd);
+static void closeall(int unix_server_fd, int unix_client_fd, int tcp_server_fd, pthread_t t_listener){
+    if(tcp_server_fd != -1){
+        shutdown(tcp_server_fd, SHUT_RDWR);
+        pthread_join(&t_listener, NULL);
+    }
     if(unix_client_fd != -1)
-        close(unix_client_fd);
+        shutdown(unix_client_fd, SHUT_RDWR);
     if(unix_server_fd != -1)
-        close(unix_server_fd);
+        shutdown(unix_server_fd, SHUT_RDWR);
     unlink(UNIX_SOCKET_NAME);
 
     closelog();
@@ -208,4 +232,19 @@ static int write_to_tcp_server(int tcp_server_fd, struct measures_data_t* measur
         return 0;
     }
     return 1;
+}
+
+static void* thread_listener(void* args){
+    struct thread_args* t_args = args;
+    int countermeasure;
+
+    while(!end){
+        if(recv(*(t_args->tcp_server_fd_p), &countermeasure, sizeof(countermeasure), 0) <= 0){
+            error_message("Listening TCP Server");
+            break;
+        }
+        
+        if(send(*(t_args->unix_client_fd_p), &countermeasure, sizeof(countermeasure), MSG_NOSIGNAL) <= 0)
+            error_message("Resend TCP Server Countermeasure to Unix Client");
+    }
 }
