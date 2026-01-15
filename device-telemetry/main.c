@@ -13,6 +13,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <pthread.h>
 
 #include "bmp280.h"
 #include "lcd.h"
@@ -20,12 +21,19 @@
 #define I2C_DEV "/dev/i2c-1"
 #define UNIX_SOCKET_NAME "/tmp/telemetry-client.socket"
 
-static void closeall(int i2c_fd, int unix_server_fd);
+struct thread_args{
+    int* unix_server_fd_p;
+};
+
+static void closeall(int i2c_fd, int unix_server_fd, pthread_t t_listener);
 static void set_signals();
 static void term_handler(int);
 static void error_message(char* msg);
+
 static int init_client_unix_socket(int* unix_server_fd);
 static int write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_readout_p);
+
+static void* thread_listener(void* args);
 
 static int end = 0;
 static int daemon_mode = 0;
@@ -36,6 +44,10 @@ int main(int argc, char** argv)
     int i2c_fd = -1;
     int unix_server_fd = -1;
     struct bmp280_readout_t bmp280_readout;
+    pthread_t t_listener = NULL;
+    struct thread_args t_args;
+    t_args.unix_server_fd_p = &unix_server_fd;
+
     
 
 
@@ -48,34 +60,38 @@ int main(int argc, char** argv)
 
     // Init Unix Socket as Client 
     if(!init_client_unix_socket(&unix_server_fd)){
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
+    }else{
+        //Create Listener Thread
+        if(unix_server_fd != -1)
+            pthread_create(&t_listener, NULL, thread_listener, &t_args);
     }
     
     // I2C Devices initialization
     i2c_fd = open(I2C_DEV, O_RDWR);
     if (i2c_fd < 0) {
         error_message("Open i2c-1");
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
 
 
     if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
         error_message("Ioctl I2C_SLAVE (bmp280) command");
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
     if(!init_bmp280(i2c_fd)){
         error_message("Init BMP280");
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
 
 
     if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
         error_message("Ioctl I2C_SLAVE(lcd) command");
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
     init_lcd(i2c_fd);
@@ -85,7 +101,7 @@ int main(int argc, char** argv)
     // First measures not used because of wrong values
     if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
         error_message("Ioctl I2C_SLAVE (bmp280) command");
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
     bmp280_measurement(i2c_fd, &bmp280_readout);
@@ -98,15 +114,19 @@ int main(int argc, char** argv)
         //Try reconnect server
         if(unix_server_fd == -1){
             if(!init_client_unix_socket(&unix_server_fd)){
-                closeall(i2c_fd, unix_server_fd);
+                closeall(i2c_fd, unix_server_fd, t_listener);
                 exit(EXIT_FAILURE);
+            }else{
+                //Create Listener Thread
+                if(unix_server_fd != -1)
+                    pthread_create(&t_listener, NULL, thread_listener, &t_args);
             }
         }
 
         // Take measures
         if (ioctl(i2c_fd, I2C_SLAVE, BMP280_ADDR1) < 0) {
             error_message("Ioctl I2C_SLAVE (bmp280) command");
-            closeall(i2c_fd, unix_server_fd);
+            closeall(i2c_fd, unix_server_fd, t_listener);
             exit(EXIT_FAILURE);
         }
         if(!bmp280_measurement(i2c_fd, &bmp280_readout))
@@ -115,7 +135,7 @@ int main(int argc, char** argv)
         // Write to lcd
         if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
             error_message("Ioctl I2C_SLAVE(lcd) command");
-            closeall(i2c_fd, unix_server_fd);
+            closeall(i2c_fd, unix_server_fd, t_listener);
             exit(EXIT_FAILURE);
         }
         char s1[16], s2[16];
@@ -128,15 +148,17 @@ int main(int argc, char** argv)
             if(!write_to_server(unix_server_fd, &bmp280_readout)){
                 close(unix_server_fd);
                 unix_server_fd = -1;
+                pthread_join(t_listener, NULL);
+                t_listener = NULL;
             }
         }
 
 
-        sleep(60);
+        sleep(5);
     }
     if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
         error_message("Ioctl I2C_SLAVE(lcd) command");
-        closeall(i2c_fd, unix_server_fd);
+        closeall(i2c_fd, unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
     write_lcd(i2c_fd, "Closing app", "");
@@ -151,18 +173,20 @@ int main(int argc, char** argv)
     sleep(2);
     write_lcd(i2c_fd, "", "");
 
-    closeall(i2c_fd, unix_server_fd);
+    closeall(i2c_fd, unix_server_fd, t_listener);
     exit(EXIT_SUCCESS);
 }
 
 
 
-static void closeall(int i2c_fd, int unix_server_fd){
+static void closeall(int i2c_fd, int unix_server_fd, pthread_t t_listener){
+    if(unix_server_fd != -1){
+        shutdown(unix_server_fd, SHUT_RD);
+        pthread_join(t_listener, NULL);
+    }
     if(i2c_fd != -1)
         close(i2c_fd);
-    if(unix_server_fd != -1)
-        close(unix_server_fd);
-    
+
     closelog();
 }
 
@@ -212,4 +236,18 @@ static int write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_r
         return 0;
     }
     return 1;
+}
+
+static void* thread_listener(void* args){
+    struct thread_args* t_args = args;
+    int countermeasure;
+
+    while(!end){
+        if(recv(*(t_args->unix_server_fd_p), &countermeasure, sizeof(countermeasure), 0) <= 0){
+            error_message("Listening Unix Server");
+            break;
+        }
+
+        syslog(LOG_USER, "Countermeasure: %d", countermeasure);
+    }
 }
