@@ -17,6 +17,7 @@
 
 #include "bmp280.h"
 #include "lcd.h"
+#include "led.h"
 
 #define I2C_DEV "/dev/i2c-1"
 #define UNIX_SOCKET_NAME "/tmp/telemetry-client.socket"
@@ -154,7 +155,7 @@ int main(int argc, char** argv)
         }
 
 
-        sleep(5);
+        sleep(60);
     }
     if(ioctl(i2c_fd, I2C_SLAVE, LCD_ADDR) < 0) {
         error_message("Ioctl I2C_SLAVE(lcd) command");
@@ -241,6 +242,13 @@ static int write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_r
 static void* thread_listener(void* args){
     struct thread_args* t_args = args;
     int countermeasure;
+    int gpiochip_fd;
+
+    gpiochip_fd = open("/dev/gpiochip0", O_RDWR);
+    if (gpiochip_fd < 0) {
+        error_message("Open gpiochip0");
+        return;
+    }
 
     while(!end){
         if(recv(*(t_args->unix_server_fd_p), &countermeasure, sizeof(countermeasure), 0) <= 0){
@@ -248,6 +256,10 @@ static void* thread_listener(void* args){
             break;
         }
 
-        syslog(LOG_USER, "Countermeasure: %d", countermeasure);
+        //  Countermeasure action
+        set_rgb_color(gpiochip_fd, countermeasure);
     }
+
+    set_rgb_color(gpiochip_fd, 0);
+    close(gpiochip_fd);
 }

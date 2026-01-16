@@ -3,7 +3,7 @@ CFLAGS  ?= -Wall -Wextra -g
 LDFLAGS ?= 
 
 TARGET  := telemetry-app
-SRCS    := main.c bmp280.c lcd.c
+SRCS    := main.c bmp280.c lcd.c led.c
 OBJS    := $(SRCS:.c=.o)
 
 .PHONY: all clean
