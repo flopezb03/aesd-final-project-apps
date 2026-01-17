@@ -29,6 +29,8 @@ static int init_server_tcp_socket(int* tcp_server_fd, int* tcp_client_fd);
 static int accept_tcp_client(int tcp_server_fd, int* tcp_client_fd);
 static int read_from_client(int tcp_client_fd, struct measures_data_t* md);
 
+static void process_data(int tcp_client_fd, struct measures_data_t md);
+
 
 static int daemon_mode = 0;
 static int end = 0;
@@ -72,8 +74,7 @@ int main(int argc, char** argv){
         }
 
         //  Process data
-        fprintf(stderr, "Temp: %.2lf | Pres: %.2lf | Time: %ld\n", measures_data.temperature, measures_data.pressure, measures_data.timestamp);
-        syslog(LOG_USER, "Temp: %.2lf | Pres: %.2lf | Time: %ld\n", measures_data.temperature, measures_data.pressure, measures_data.timestamp);
+        process_data(tcp_client_fd, measures_data);
         
     }
 
@@ -152,3 +153,20 @@ static int read_from_client(int tcp_client_fd, struct measures_data_t* md){
     return recv(tcp_client_fd, md, sizeof(struct measures_data_t), 0) > 0;
 }
 
+static void process_data(int tcp_client_fd, struct measures_data_t md){
+    fprintf(stdout, "Temp: %.2lf | Pres: %.2lf | Time: %s", md.temperature, md.pressure, ctime(&md.timestamp));
+    syslog(LOG_USER, "Temp: %.2lf | Pres: %.2lf | Time: %s", md.temperature, md.pressure, ctime(&md.timestamp));
+
+    //  Simulating a data processing of a IoT Server
+    srand(time(NULL));
+    if(rand() % 10 > 4)
+        return;
+
+    sleep(2);
+
+    srand(time(NULL));
+    int countermeasure = rand() % 8;
+    if(send(tcp_client_fd, &countermeasure, sizeof(countermeasure), 0) <= 0)
+        error_message("Send to client");    
+
+}
