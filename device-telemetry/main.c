@@ -163,15 +163,15 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
     write_lcd(i2c_fd, "Closing app", "");
-    sleep(2);
+    usleep(750000);
     write_lcd(i2c_fd, "", "");
-    sleep(1);
+    usleep(250000);
     write_lcd(i2c_fd, "Closing app", "");
-    sleep(2);
+    usleep(750000);
     write_lcd(i2c_fd, "", "");
-    sleep(1);
+    usleep(250000);
     write_lcd(i2c_fd, "Closing app", "");
-    sleep(2);
+    usleep(750000);
     write_lcd(i2c_fd, "", "");
 
     closeall(i2c_fd, unix_server_fd, t_listener);
