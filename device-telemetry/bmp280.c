@@ -3,6 +3,12 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include <linux/i2c-dev.h>
+
+// I2C Address
+#define BMP280_ADDR1 0x76
+#define BMP280_ADDR2 0x77
 
 // Types
 #define BMP280_S32_t int32_t
@@ -12,9 +18,9 @@
 // Registers
 #define BMP280_CTRL_MEAS    0xF4
 #define BMP280_CONFIG       0xF5
-#define BMP280_PRESS_MSB     0xF7
-#define BMP280_PRESS_LSB     0xF8
-#define BMP280_PRESS_XLSB    0xF9
+#define BMP280_PRESS_MSB    0xF7
+#define BMP280_PRESS_LSB    0xF8
+#define BMP280_PRESS_XLSB   0xF9
 #define BMP280_TEMP_MSB     0xFA
 #define BMP280_TEMP_LSB     0xFB
 #define BMP280_TEMP_XLSB    0xFC
@@ -71,21 +77,21 @@ static int bmp280_write(int fd, uint8_t reg, uint8_t val)
 {
     uint8_t buf[2] = {reg, val};
     if(write(fd, buf, 2) < 2)
-        return 0;
-    return 1;
+        return -1;
+    return 0;
 }
 
 static int bmp280_read(int fd, uint8_t reg, uint8_t *buf, int len)
 {
     if(write(fd, &reg, 1) < 1)
-        return 0;
+        return -1;
     if(read(fd, buf, len) < len)
-        return 0;
-    return 1;
+        return -1;
+    return 0;
 }
 static int comp_param_read(int fd, uint8_t reg, uint16_t *res){
     uint8_t buf[2];
-    if(!bmp280_read(fd, reg, &buf, 2))
+    if(bmp280_read(fd, reg, &buf, 2) == -1)
         return 0;
     
     *res = ((uint16_t)buf[1] << 8) | buf[0];
@@ -128,6 +134,9 @@ static BMP280_U32_t bmp280_compensate_P_int64(BMP280_S32_t adc_P){
 
 int init_bmp280(int fd){
 
+    if(ioctl(fd, I2C_SLAVE, BMP280_ADDR1) < 0)
+        return -1;
+
     // Read compensation parameters
     int read_success = 1;
     read_success &= comp_param_read(fd, BMP280_CALIB00, &dig_T1);
@@ -145,17 +154,17 @@ int init_bmp280(int fd){
     read_success &= comp_param_read(fd, BMP280_CALIB22, &dig_P9);
 
     if(!read_success)
-        return 0;
+        return -1;
 
     // Set register config
     reg_config = (t_sb << 5) | (filter << 2) | (spi3w_en);
-    if(!bmp280_write(fd, BMP280_CONFIG, reg_config))
-        return 0;
+    if(bmp280_write(fd, BMP280_CONFIG, reg_config) == -1)
+        return -1;
 
     // Prepare register ctrl_meas
     reg_ctrl_meas = (osrs_p << 5) | (osrs_t << 2) | (mode);
 
-    return 1;
+    return 0;
 }
 
 
@@ -164,23 +173,26 @@ int bmp280_measurement(int fd, struct bmp280_readout_t* readout){
     BMP280_S32_t temperature;
     BMP280_U32_t pressure;
 
+    if(ioctl(fd, I2C_SLAVE, BMP280_ADDR1) < 0)
+        return -1;
+
     // Set chip in forced mode, measure and then go to sleep mode again
-    if(!bmp280_write(fd, BMP280_CTRL_MEAS, reg_ctrl_meas))
-        return 0;
+    if(bmp280_write(fd, BMP280_CTRL_MEAS, reg_ctrl_meas) == -1)
+        return -1;
 
     // Read temperature registers
     uint8_t raw_temp_buf[3];
-    if(!bmp280_read(fd, BMP280_TEMP_MSB, &raw_temp_buf, 3))
-        return 0;
+    if(bmp280_read(fd, BMP280_TEMP_MSB, &raw_temp_buf, 3) == -1)
+        return -1;
 
     // Read pressure registers
     uint8_t raw_press_buf[3];
-    if(!bmp280_read(fd, BMP280_PRESS_MSB, &raw_press_buf, 3))
-        return 0;
+    if(bmp280_read(fd, BMP280_PRESS_MSB, &raw_press_buf, 3) == -1)
+        return -1;
 
     // Timestamp
     if(time(&readout->timestamp) == -1)
-        return 0;
+        return -1;
 
     // Format temperature
     BMP280_S32_t raw_temp = (int32_t)((uint32_t)raw_temp_buf[0] << 12) | ((uint32_t)raw_temp_buf[1] << 4) | ((uint32_t)raw_temp_buf[2] >> 4);
@@ -193,5 +205,5 @@ int bmp280_measurement(int fd, struct bmp280_readout_t* readout){
     readout->pressure = (double) pressure / 256;
 
 
-    return 1;
+    return 0;
 }
