@@ -24,7 +24,7 @@ struct thread_args{
     int* unix_server_fd_p;
 };
 
-static void closeall(int i2c_fd, int unix_server_fd, pthread_t t_listener);
+static void closeall(int unix_server_fd, pthread_t t_listener);
 static void set_signals();
 static void term_handler(int);
 static void error_message(char* msg);
@@ -40,7 +40,6 @@ static int daemon_mode = 0;
 
 int main(int argc, char** argv)
 {
-    int i2c_fd = -1;
     int unix_server_fd = -1;
     struct bmp280_readout_t bmp280_readout;
     pthread_t t_listener = NULL;
@@ -59,7 +58,7 @@ int main(int argc, char** argv)
 
     // Init Unix Socket as Client 
     if(!init_client_unix_socket(&unix_server_fd)){
-        closeall(i2c_fd, unix_server_fd, t_listener);
+        closeall(unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }else{
         //Create Listener Thread
@@ -67,30 +66,24 @@ int main(int argc, char** argv)
             pthread_create(&t_listener, NULL, thread_listener, &t_args);
     }
     
-    // I2C Devices initialization
-    i2c_fd = open(I2C_DEV, O_RDWR);
-    if (i2c_fd < 0) {
-        error_message("Open i2c-1");
-        closeall(i2c_fd, unix_server_fd, t_listener);
-        exit(EXIT_FAILURE);
-    }
+    // Devices initialization
 
-    if(init_bmp280(i2c_fd) == -1){
+    if(init_bmp280() == -1){
         error_message("Init BMP280");
-        closeall(i2c_fd, unix_server_fd, t_listener);
+        closeall(unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
 
 
-    if(init_lcd(i2c_fd) == -1){
+    if(init_lcd() == -1){
         error_message("Init LCD");
-        closeall(i2c_fd, unix_server_fd, t_listener);
+        closeall(unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
     
-    if(bmp280_measurement(i2c_fd, &bmp280_readout) == -1){
+    if(bmp280_measurement(&bmp280_readout) == -1){
         error_message("BMP280 Measurement");
-        closeall(i2c_fd, unix_server_fd, t_listener);
+        closeall(unix_server_fd, t_listener);
         exit(EXIT_FAILURE);
     }
     sleep(2);
@@ -102,7 +95,7 @@ int main(int argc, char** argv)
         //Try reconnect server
         if(unix_server_fd == -1){
             if(!init_client_unix_socket(&unix_server_fd)){
-                closeall(i2c_fd, unix_server_fd, t_listener);
+                closeall(unix_server_fd, t_listener);
                 exit(EXIT_FAILURE);
             }else{
                 //Create Listener Thread
@@ -112,9 +105,9 @@ int main(int argc, char** argv)
         }
 
         // Take measures
-        if(bmp280_measurement(i2c_fd, &bmp280_readout) == -1){
+        if(bmp280_measurement(&bmp280_readout) == -1){
             error_message("BMP280 Measurement");
-            closeall(i2c_fd, unix_server_fd, t_listener);
+            closeall(unix_server_fd, t_listener);
             exit(EXIT_FAILURE);
         }
         
@@ -122,9 +115,9 @@ int main(int argc, char** argv)
         char s1[16], s2[16];
         snprintf(s1, sizeof(s1), "T: %.2lf %cC", bmp280_readout.temperature, 0b11011111);
         snprintf(s2, sizeof(s2), "P: %.2lf hPa", bmp280_readout.pressure / 100);
-        if(write_lcd(i2c_fd, s1, s2) == -1){
+        if(write_lcd(s1, s2) == -1){
             error_message("Write LCD");
-            closeall(i2c_fd, unix_server_fd, t_listener);
+            closeall(unix_server_fd, t_listener);
             exit(EXIT_FAILURE);
         }
 
@@ -142,31 +135,32 @@ int main(int argc, char** argv)
         sleep(5);
     }
 
-    write_lcd(i2c_fd, "Closing app", "");
+    write_lcd("Closing app", "");
     usleep(750000);
-    write_lcd(i2c_fd, "", "");
+    write_lcd("", "");
     usleep(250000);
-    write_lcd(i2c_fd, "Closing app", "");
+    write_lcd("Closing app", "");
     usleep(750000);
-    write_lcd(i2c_fd, "", "");
+    write_lcd("", "");
     usleep(250000);
-    write_lcd(i2c_fd, "Closing app", "");
+    write_lcd("Closing app", "");
     usleep(750000);
-    write_lcd(i2c_fd, "", "");
+    write_lcd("", "");
 
-    closeall(i2c_fd, unix_server_fd, t_listener);
+    closeall(unix_server_fd, t_listener);
     exit(EXIT_SUCCESS);
 }
 
 
 
-static void closeall(int i2c_fd, int unix_server_fd, pthread_t t_listener){
+static void closeall(int unix_server_fd, pthread_t t_listener){
     if(unix_server_fd != -1){
         shutdown(unix_server_fd, SHUT_RD);
         pthread_join(t_listener, NULL);
     }
-    if(i2c_fd != -1)
-        close(i2c_fd);
+    
+    close_bmp280();
+    close_lcd();
 
     closelog();
 }

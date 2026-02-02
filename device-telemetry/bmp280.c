@@ -3,8 +3,12 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <time.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
+
+
+#define I2C_DEV "/dev/i2c-1"
 
 // I2C Address
 #define BMP280_ADDR1 0x76
@@ -73,6 +77,9 @@ static uint8_t spi3w_en = 0b0;      // Not used 3 pin SPI
 static uint8_t reg_config;
 
 
+static int fd;
+
+
 static int bmp280_write(int fd, uint8_t reg, uint8_t val)
 {
     uint8_t buf[2] = {reg, val};
@@ -132,7 +139,11 @@ static BMP280_U32_t bmp280_compensate_P_int64(BMP280_S32_t adc_P){
 }
 
 
-int init_bmp280(int fd){
+int init_bmp280(){
+
+    fd = open(I2C_DEV, O_RDWR);
+    if(fd < 0)
+        return -1;
 
     if(ioctl(fd, I2C_SLAVE, BMP280_ADDR1) < 0)
         return -1;
@@ -169,7 +180,7 @@ int init_bmp280(int fd){
 
 
 
-int bmp280_measurement(int fd, struct bmp280_readout_t* readout){
+int bmp280_measurement(struct bmp280_readout_t* readout){
     BMP280_S32_t temperature;
     BMP280_U32_t pressure;
 
@@ -206,4 +217,9 @@ int bmp280_measurement(int fd, struct bmp280_readout_t* readout){
 
 
     return 0;
+}
+
+void close_bmp280(){
+    if(fd != -1)
+        close(fd);
 }
