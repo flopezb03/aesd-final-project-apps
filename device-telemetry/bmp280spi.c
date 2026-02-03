@@ -1,19 +1,18 @@
-#ifndef BMP280_SPI
+#ifdef BMP280_SPI
 #include "bmp280.h"
 
+#include <fcntl.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/types.h>
+#include <linux/spi/spidev.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <time.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <linux/i2c-dev.h>
+#include <string.h>
 
-
-#define I2C_DEV "/dev/i2c-1"
-
-// I2C Address
-#define BMP280_ADDR1 0x76
-#define BMP280_ADDR2 0x77
+#define SPI_DEV "/dev/spidev0.0"
 
 // Types
 #define BMP280_S32_t int32_t
@@ -58,6 +57,8 @@
 #define BMP280_CALIB24      0xA0
 #define BMP280_CALIB25      0xA1
 
+static int bmp280_fd;
+
 
 // Compensation parameters
 static BMP280_S32_t t_fine;
@@ -78,12 +79,11 @@ static uint8_t spi3w_en = 0b0;      // Not used 3 pin SPI
 static uint8_t reg_config;
 
 
-static int fd;
-
 
 static int bmp280_write(int fd, uint8_t reg, uint8_t val)
 {
-    uint8_t buf[2] = {reg, val};
+    reg = reg & 0b01111111;                     //  Address for writing in SPI mode
+    uint8_t buf[2] = {reg & 0b01111111, val};
     if(write(fd, buf, 2) < 2)
         return -1;
     return 0;
@@ -91,12 +91,33 @@ static int bmp280_write(int fd, uint8_t reg, uint8_t val)
 
 static int bmp280_read(int fd, uint8_t reg, uint8_t *buf, int len)
 {
-    if(write(fd, &reg, 1) < 1)
+    reg = reg | 0b10000000;                     //  Address for reading in SPI mode
+    len += 1;
+
+    uint8_t out_buf[len];
+    memset(out_buf, 0, len);
+    out_buf[0] = reg;
+
+    uint8_t in_buf[len];
+    memset(in_buf, 0, len);
+
+    struct spi_ioc_transfer trx = {
+        .tx_buf = (unsigned long) out_buf,
+        .rx_buf = (unsigned long) in_buf,
+        .bits_per_word = 8,
+        .speed_hz = 1000000,
+        .delay_usecs = 0,
+        .len = len
+    };
+    
+
+    if(ioctl(fd, SPI_IOC_MESSAGE(1), &trx) == -1)
         return -1;
-    if(read(fd, buf, len) < len)
-        return -1;
+    
+    memcpy(buf, &in_buf[1], len-1);
     return 0;
 }
+
 static int comp_param_read(int fd, uint8_t reg, uint16_t *res){
     uint8_t buf[2];
     if(bmp280_read(fd, reg, &buf, 2) == -1)
@@ -142,35 +163,50 @@ static BMP280_U32_t bmp280_compensate_P_int64(BMP280_S32_t adc_P){
 
 int init_bmp280(){
 
-    fd = open(I2C_DEV, O_RDWR);
-    if(fd < 0)
+    bmp280_fd = open(SPI_DEV, O_RDWR);
+    if(bmp280_fd < 0)
         return -1;
 
-    if(ioctl(fd, I2C_SLAVE, BMP280_ADDR1) < 0)
+    uint8_t spi_mode = SPI_MODE_0;
+    uint32_t spi_speed = 100000;
+    uint8_t spi_bits = 8;
+
+    // SPI init
+    if(ioctl(bmp280_fd, SPI_IOC_WR_MODE, &spi_mode) == -1)
         return -1;
+    
+    if (ioctl(bmp280_fd, SPI_IOC_WR_BITS_PER_WORD, &spi_bits) == -1)
+        return -1;  
+
+
+    if(ioctl(bmp280_fd, SPI_IOC_WR_MAX_SPEED_HZ, &spi_speed) == -1)
+        return -1;
+
+
+
 
     // Read compensation parameters
     int read_success = 1;
-    read_success &= comp_param_read(fd, BMP280_CALIB00, &dig_T1);
-    read_success &= comp_param_read(fd, BMP280_CALIB02, &dig_T2);
-    read_success &= comp_param_read(fd, BMP280_CALIB04, &dig_T3);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB00, &dig_T1);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB02, &dig_T2);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB04, &dig_T3);
 
-    read_success &= comp_param_read(fd, BMP280_CALIB06, &dig_P1);
-    read_success &= comp_param_read(fd, BMP280_CALIB08, &dig_P2);
-    read_success &= comp_param_read(fd, BMP280_CALIB10, &dig_P3);
-    read_success &= comp_param_read(fd, BMP280_CALIB12, &dig_P4);
-    read_success &= comp_param_read(fd, BMP280_CALIB14, &dig_P5);
-    read_success &= comp_param_read(fd, BMP280_CALIB16, &dig_P6);
-    read_success &= comp_param_read(fd, BMP280_CALIB18, &dig_P7);
-    read_success &= comp_param_read(fd, BMP280_CALIB20, &dig_P8);
-    read_success &= comp_param_read(fd, BMP280_CALIB22, &dig_P9);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB06, &dig_P1);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB08, &dig_P2);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB10, &dig_P3);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB12, &dig_P4);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB14, &dig_P5);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB16, &dig_P6);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB18, &dig_P7);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB20, &dig_P8);
+    read_success &= comp_param_read(bmp280_fd, BMP280_CALIB22, &dig_P9);
 
     if(!read_success)
         return -1;
 
     // Set register config
     reg_config = (t_sb << 5) | (filter << 2) | (spi3w_en);
-    if(bmp280_write(fd, BMP280_CONFIG, reg_config) == -1)
+    if(bmp280_write(bmp280_fd, BMP280_CONFIG, reg_config) == -1)
         return -1;
 
     // Prepare register ctrl_meas
@@ -185,21 +221,18 @@ int bmp280_measurement(struct bmp280_readout_t* readout){
     BMP280_S32_t temperature;
     BMP280_U32_t pressure;
 
-    if(ioctl(fd, I2C_SLAVE, BMP280_ADDR1) < 0)
-        return -1;
-
     // Set chip in forced mode, measure and then go to sleep mode again
-    if(bmp280_write(fd, BMP280_CTRL_MEAS, reg_ctrl_meas) == -1)
+    if(bmp280_write(bmp280_fd, BMP280_CTRL_MEAS, reg_ctrl_meas) == -1)
         return -1;
 
     // Read temperature registers
     uint8_t raw_temp_buf[3];
-    if(bmp280_read(fd, BMP280_TEMP_MSB, &raw_temp_buf, 3) == -1)
+    if(bmp280_read(bmp280_fd, BMP280_TEMP_MSB, &raw_temp_buf, 3) == -1)
         return -1;
 
     // Read pressure registers
     uint8_t raw_press_buf[3];
-    if(bmp280_read(fd, BMP280_PRESS_MSB, &raw_press_buf, 3) == -1)
+    if(bmp280_read(bmp280_fd, BMP280_PRESS_MSB, &raw_press_buf, 3) == -1)
         return -1;
 
     // Timestamp
@@ -216,12 +249,11 @@ int bmp280_measurement(struct bmp280_readout_t* readout){
     pressure = bmp280_compensate_P_int64(raw_press);
     readout->pressure = (double) pressure / 256;
 
-
     return 0;
 }
 
 void close_bmp280(){
-    if(fd != -1)
-        close(fd);
+    if(bmp280_fd != -1)
+        close(bmp280_fd);
 }
 #endif
