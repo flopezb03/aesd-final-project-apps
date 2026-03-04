@@ -3,7 +3,15 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <linux/i2c-dev.h>
 
+
+#define I2C_DEV "/dev/i2c-1"
+
+//  I2C Address
+#define LCD_ADDR 0x27
 
 // Pin
 #define LCD_BIT_ENABLE      0b00000100
@@ -34,7 +42,7 @@
 #define LCD_CMD_SET_ADDRESS 0b10000000
 
 
-
+static int fd;
 
 
 static uint8_t lcd_set_bit(uint8_t byte, uint8_t bit){
@@ -72,8 +80,15 @@ static void lcd_write_byte(int fd, uint8_t rs, uint8_t data){
 
 
 
-void init_lcd(int fd){
+int init_lcd(){
     uint8_t func = 0;
+
+    fd = open(I2C_DEV, O_RDWR);
+    if(fd < 0)
+        return -1;
+
+    if(ioctl(fd, I2C_SLAVE, LCD_ADDR) < 0)
+        return -1;
 
     //  Reset byte to 0
     write(fd, &func, 1);
@@ -101,10 +116,15 @@ void init_lcd(int fd){
     //  Display Control
     func = LCD_CMD_DISPLAY | LCD_CMD_DISPLAY_ON;
     lcd_write_byte(fd, 0, func);
+
+    return 0;
 }
 
-void write_lcd(int fd, char* s1, char* s2){
+int write_lcd(char* s1, char* s2){
     int s1_len, s2_len;
+
+    if(ioctl(fd, I2C_SLAVE, LCD_ADDR) < 0)
+        return -1;
 
     s1_len = strlen(s1);
     s2_len = strlen(s2);
@@ -120,4 +140,11 @@ void write_lcd(int fd, char* s1, char* s2){
 
     for (int i = 0; i < s2_len; i++)
         lcd_write_byte(fd, 1, s2[i]);
+
+    return 0;
+}
+
+void close_lcd(){
+    if(fd != -1)
+        close(fd);
 }

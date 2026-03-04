@@ -2,12 +2,8 @@
 
 #define BMP280_H
 
-#include <stdint.h>
-#include <time.h>
 
-// I2C Address
-#define BMP280_ADDR1 0x76
-#define BMP280_ADDR2 0x77
+#include <time.h>
 
 
 struct bmp280_readout_t{
@@ -18,8 +14,9 @@ struct bmp280_readout_t{
 
 
 
-int init_bmp280(int fd);
-int bmp280_measurement(int fd, struct bmp280_readout_t* readout);
+int init_bmp280();
+int bmp280_measurement(struct bmp280_readout_t* readout);
+void close_bmp280();
 
 
 

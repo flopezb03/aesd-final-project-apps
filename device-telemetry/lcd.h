@@ -2,13 +2,10 @@
 
 #define LCD_H
 
-//  I2C Address
-#define LCD_ADDR 0x27
 
-
-
-void init_lcd(int fd);
-void write_lcd(int fd, char* s1, char* s2);
+int init_lcd();
+int write_lcd(char* s1, char* s2);
+void close_lcd();
 
 
 
