@@ -22,12 +22,19 @@ int rgbled_open(struct inode *inode, struct file *filp){
     dev = container_of(inode->i_cdev, struct rgbled_dev, cdev);
     filp->private_data = dev;
 
+    if(atomic_cmpxchg(&dev->opened, 0, 1))
+        return -EBUSY;  
+
     dev->color = 0;
 
     return 0;
 }
 
 int rgbled_release(struct inode *inode, struct file *filp){
+    struct rgbled_dev *dev = filp->private_data;
+
+    atomic_set(&dev->opened, 0);
+    
     return 0;
 }
 
@@ -73,6 +80,8 @@ static int __init rgbled_init(void){
         return res;
 
     memset(&rgbled_device, 0, sizeof(struct rgbled_dev));
+
+    atomic_set(&rgbled_device.opened, 0);
 
 
     cdev_init(&rgbled_device.cdev, &rgbled_fops);

@@ -3,10 +3,11 @@
 
 #include <linux/types.h>
 #include <linux/cdev.h>
+#include <linux/atomic.h>
 
 struct rgbled_dev{
     struct cdev cdev;
-    struct mutex lock;
+    atomic_t opened;
     uint8_t color;
 };
 
