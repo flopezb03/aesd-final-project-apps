@@ -15,14 +15,22 @@ dev_t rgbled_devnum;
 
 
 int rgbled_open(struct inode *inode, struct file *filp){
+    struct rgbled_dev *dev;
+
+    dev = container_of(inode->i_cdev, struct rgbled_dev, cdev);
+    filp->private_data = dev;
+
     return 0;
 }
+
 int rgbled_release(struct inode *inode, struct file *filp){
     return 0;
 }
+
 ssize_t rgbled_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos){
     return 0;
 }
+
 ssize_t rgbled_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos){
     return 0;
 }
