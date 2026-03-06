@@ -3,6 +3,8 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
+#include <asm/uaccess.h>
+#include <linux/slab.h>
 
 #define NUM_DEVICES 1
 #define FIRSTMINOR 0
@@ -20,6 +22,8 @@ int rgbled_open(struct inode *inode, struct file *filp){
     dev = container_of(inode->i_cdev, struct rgbled_dev, cdev);
     filp->private_data = dev;
 
+    dev->color = 0;
+
     return 0;
 }
 
@@ -28,7 +32,21 @@ int rgbled_release(struct inode *inode, struct file *filp){
 }
 
 ssize_t rgbled_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos){
-    return 0;
+    struct rgbled_dev *dev = filp->private_data;
+    ssize_t out_size = sizeof(dev->color);
+
+    if(*f_pos >= out_size)
+        return 0;
+
+    if (count < out_size)
+        out_size = count;
+
+    if(copy_to_user(buf, &dev->color, out_size))
+        return -EFAULT;
+
+    *f_pos += out_size;
+
+    return out_size;
 }
 
 ssize_t rgbled_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos){
