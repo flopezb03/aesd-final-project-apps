@@ -5,9 +5,14 @@
 #include <linux/cdev.h>
 #include <asm/uaccess.h>
 #include <linux/slab.h>
+#include <linux/gpio.h>
 
 #define NUM_DEVICES 1
 #define FIRSTMINOR 0
+
+#define RGBLED_RED 21
+#define RGBLED_GREEN 20
+#define RGBLED_BLUE 16
 
 MODULE_AUTHOR("flopezb03");
 MODULE_LICENSE("Dual BSD/GPL");
@@ -27,14 +32,25 @@ int rgbled_open(struct inode *inode, struct file *filp){
 
     dev->color = 0;
 
+    gpio_request(RGBLED_RED, "rgbled");
+    gpio_request(RGBLED_GREEN, "rgbled");
+    gpio_request(RGBLED_BLUE, "rgbled");
+
+    gpio_direction_output(RGBLED_RED, 0);
+    gpio_direction_output(RGBLED_GREEN, 0);
+    gpio_direction_output(RGBLED_BLUE, 0);
+
     return 0;
 }
 
 int rgbled_release(struct inode *inode, struct file *filp){
     struct rgbled_dev *dev = filp->private_data;
 
+    gpio_free(RGBLED_RED);
+    gpio_free(RGBLED_GREEN);
+    gpio_free(RGBLED_BLUE);
+
     atomic_set(&dev->opened, 0);
-    
     return 0;
 }
 
@@ -57,7 +73,37 @@ ssize_t rgbled_read(struct file *filp, char __user *buf, size_t count, loff_t *f
 }
 
 ssize_t rgbled_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos){
-    return 0;
+    uint8_t newcolor;
+    struct rgbled_dev *dev = filp->private_data;
+    ssize_t in_size = sizeof(newcolor);
+
+    if(copy_from_user(&newcolor, buf, in_size))
+        return -EFAULT;
+
+    
+    //mask
+    newcolor = newcolor & 0b00000111;
+    dev->color = newcolor;
+
+
+    if(newcolor & 0b00000100)   //  RED
+        gpio_set_value(RGBLED_RED, 1);
+    else
+        gpio_set_value(RGBLED_RED, 0);
+
+    if(newcolor & 0b00000010)   //  GREEN
+        gpio_set_value(RGBLED_GREEN, 1);
+    else
+        gpio_set_value(RGBLED_GREEN, 0);
+
+    if(newcolor & 0b00000001)   //  BLUE
+        gpio_set_value(RGBLED_BLUE, 1);
+    else
+        gpio_set_value(RGBLED_BLUE, 0);
+    
+
+
+    return in_size;
 }
 
 
