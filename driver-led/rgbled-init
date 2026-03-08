@@ -1,0 +1,13 @@
+#!/bin/sh
+
+case "$1" in
+	start)
+        /usr/bin/rgbled_load
+		;;
+	stop)
+        /usr/bin/rgbled_unload
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+	exit 1
+esac
