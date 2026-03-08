@@ -1,6 +1,8 @@
 #ifndef LED_H
 #define LED_H
 
-void set_rgb_color(int fd, int code);
+#include <stdint.h>
+
+void set_rgb_color(int fd, uint8_t code);
 
 #endif

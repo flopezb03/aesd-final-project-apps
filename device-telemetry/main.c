@@ -216,11 +216,11 @@ static int write_to_server(int unix_server_fd, struct bmp280_readout_t* bmp280_r
 static void* thread_listener(void* args){
     struct thread_args* t_args = args;
     int countermeasure;
-    int gpiochip_fd;
+    int rgbled_fd;
 
-    gpiochip_fd = open("/dev/gpiochip0", O_RDWR);
-    if (gpiochip_fd < 0) {
-        error_message("Open gpiochip0");
+    rgbled_fd = open("/dev/rgbled", O_RDWR);
+    if (rgbled_fd < 0) {
+        error_message("Open rgbled");
         return;
     }
 
@@ -231,9 +231,9 @@ static void* thread_listener(void* args){
         }
 
         //  Countermeasure action
-        set_rgb_color(gpiochip_fd, countermeasure);
+        set_rgb_color(rgbled_fd, countermeasure);
     }
 
-    set_rgb_color(gpiochip_fd, 0);
-    close(gpiochip_fd);
+    set_rgb_color(rgbled_fd, 0);
+    close(rgbled_fd);
 }
