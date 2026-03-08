@@ -58,16 +58,11 @@ ssize_t rgbled_read(struct file *filp, char __user *buf, size_t count, loff_t *f
     struct rgbled_dev *dev = filp->private_data;
     ssize_t out_size = sizeof(dev->color);
 
-    if(*f_pos >= out_size)
+    if (count == 0)
         return 0;
-
-    if (count < out_size)
-        out_size = count;
 
     if(copy_to_user(buf, &dev->color, out_size))
         return -EFAULT;
-
-    *f_pos += out_size;
 
     return out_size;
 }
@@ -80,11 +75,7 @@ ssize_t rgbled_write(struct file *filp, const char __user *buf, size_t count, lo
     if(copy_from_user(&newcolor, buf, in_size))
         return -EFAULT;
 
-    
-    //mask
-    newcolor = newcolor & 0b00000111;
     dev->color = newcolor;
-
 
     if(newcolor & 0b00000100)   //  RED
         gpio_set_value(RGBLED_RED, 1);
